@@ -3,24 +3,39 @@ package com.example.uploadbackground
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 
-// BroadcastReceiver ที่ใช้สำหรับเริ่มต้นการทำงานหลังจากการบูตเครื่อง
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // ตรวจสอบว่าการบูตเครื่องสำเร็จแล้ว
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            // สร้าง PeriodicWorkRequest สำหรับทำงานซ้ำทุก 15 นาที
-            val workRequest = PeriodicWorkRequestBuilder<MainActivity.FileMonitorWorker>(
-                repeatInterval = 15, // ระยะเวลาที่เป็นนาที
-                repeatIntervalTimeUnit = TimeUnit.MINUTES
-            )
-                .build()
-
-            // เรียกใช้ WorkManager เพื่อเริ่มต้นงานที่กำหนด
-            WorkManager.getInstance(context).enqueue(workRequest)
+            Log.d("BootReceiver", "Boot completed broadcast received")
+            initializeFileAndStartUpload(context)
         }
+    }
+
+    private fun initializeFileAndStartUpload(context: Context) {
+        Log.d("BootReceiver", "Initializing file and starting upload")
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val periodicWorkRequest = PeriodicWorkRequestBuilder<FileMonitorWorker>(
+            repeatInterval = 15,
+            repeatIntervalTimeUnit = TimeUnit.MINUTES
+        ).setConstraints(constraints)
+            .build()
+
+        val workManager = WorkManager.getInstance(context)
+        workManager.enqueueUniquePeriodicWork(
+            "FileMonitorWorker",
+            ExistingPeriodicWorkPolicy.REPLACE,
+            periodicWorkRequest
+        )
     }
 }

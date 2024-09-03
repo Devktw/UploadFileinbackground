@@ -37,6 +37,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation(libs.cardview)
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.workRuntimeKtx)

@@ -10,11 +10,17 @@ import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.Environment
+import android.os.FileObserver
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.nio.file.FileSystems
@@ -26,6 +32,7 @@ import java.nio.file.WatchService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -40,13 +47,13 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class FileMonitorService : Service() {
 
     // พาธของไดเรกทอรีที่ต้องการเฝ้าสังเกตเพื่อดูไฟล์ใหม่ และถ้ามีไฟล์เพิ่มเข้ามาที่โฟลเดอร์ของพาธนี้จะถูกอัพโหลดทันที
-    private val DIRECTORY_TO_WATCH = "/storage/emulated/0/?"
-    private lateinit var watchService: WatchService
-    private lateinit var watchKey: WatchKey
+    private val DIRECTORY_TO_WATCH = "${Environment.getExternalStorageDirectory()}/DJI/com.dji.industry.pilot/FlightRecord/"
+    private var fileObserver: FileObserver? = null
+
 
     // ID ของช่องทางการแจ้งเตือน
     private val CHANNEL_ID = "FileMonitorServiceChannel"
-    private val NOTIFICATION_ID = 12345
+    private val NOTIFICATION_ID = 2
 
     private lateinit var wakeLock: PowerManager.WakeLock
     private val uploadQueue = ConcurrentLinkedQueue<File>()
@@ -54,19 +61,20 @@ class FileMonitorService : Service() {
 
     private lateinit var sharedPreferences: SharedPreferences
     private val UPLOADED_FILES_KEY = "uploaded_files"
+    private lateinit var watchService: WatchService
+    private lateinit var watchKey: WatchKey
+
 
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-
         // รับบริการ PowerManager และสร้าง WakeLock เพื่อให้แอพทำงานต่อไปแม้ในสภาพที่ระบบประหยัดพลังงาน
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "UploadBackground::FileMonitorWakeLock")
         wakeLock.acquire(Long.MAX_VALUE)
 
         sharedPreferences = getSharedPreferences("FileUploadPrefs", Context.MODE_PRIVATE)
-
         val directory = Paths.get(DIRECTORY_TO_WATCH)
         watchService = FileSystems.getDefault().newWatchService()
         watchKey = directory.register(watchService, StandardWatchEventKinds.ENTRY_CREATE)
@@ -106,40 +114,41 @@ class FileMonitorService : Service() {
                 }
             }
         }.start()
-
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("File Monitor Service")
             .setContentText("Monitoring directory for new files")
-            .setSmallIcon(R.drawable.ic_launcher_background)
+            .setSmallIcon(R.drawable.ic_file)
             .build()
 
         startForeground(NOTIFICATION_ID, notification)
-    }
 
-    // สร้างช่องทางการแจ้งเตือนสำหรับ Android O และเวอร์ชันที่สูงกว่า
+    }
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelName = "File Monitor Service Channel"
-            val channel = NotificationChannel(CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_DEFAULT)
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+            val name = "File Monitor Service Channel"
+            val descriptionText = "Channel for File Monitor Service"
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+            }
+
+            // ลงทะเบียนช่องทางกับระบบ; ไม่สามารถเปลี่ยนแปลงหรือปิดใช้งานได้หลังจากสร้างแล้ว
+            val notificationManager: NotificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
         }
     }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
         return START_STICKY
     }
-
-    @RequiresApi(Build.VERSION_CODES.O)
     override fun onDestroy() {
-        super.onDestroy() //เมื่อแอพเด้งให้หยุดกระบวนการทันที
-        watchKey.cancel()
-        watchService.close()
+        super.onDestroy()
+        fileObserver?.stopWatching()
         if (wakeLock.isHeld) {
             wakeLock.release()
         }
     }
-
     override fun onBind(intent: Intent?): IBinder? {
         return null
     }
@@ -151,18 +160,18 @@ class FileMonitorService : Service() {
             while (uploadQueue.isNotEmpty()) {
                 if (isNetworkAvailable()) {
                     val file = uploadQueue.poll() ?: continue
-                    if (!isFileUploaded(file.name)) {
+                    if (!isFileUploaded(file.name) && file.exists()) {
                         val success = uploadFile(file)
                         if (success) {
                             markFileAsUploaded(file.name)
+
                         } else {
-                            // ถ้าอัปโหลดล้มเหลว ให้นำไฟล์กลับไปใส่ในคิว
                             uploadQueue.offer(file)
-                            delay(60000) // รอ 1 นาที ก่อนพยายามอัปโหลดอีกครั้ง
+                            delay(15000) // รอ 1 นาที ก่อนพยายามอัปโหลดอีกครั้ง
                         }
                     }
                 } else {
-                    delay(60000) // รอ 1 นาที ก่อนตรวจสอบการเชื่อมต่อเครือข่ายอีกครั้ง
+                    delay(15000) // รอ 1 นาที ก่อนตรวจสอบการเชื่อมต่อเครือข่ายอีกครั้ง
                 }
             }
             cleanUploadedFilesList()
@@ -185,7 +194,7 @@ class FileMonitorService : Service() {
     private suspend fun uploadFile(file: File): Boolean = withContext(Dispatchers.IO) {
         try {
             val retrofit = Retrofit.Builder()
-                .baseUrl("http://10.0.0.0:800/") //ftp หรือ ที่จะเก็บไฟล์ที่อัพโหลด
+                .baseUrl("http://178.128.127.168:8089/") //ftp หรือ ที่จะเก็บไฟล์ที่อัพโหลด
                 .addConverterFactory(GsonConverterFactory.create())
                 .build()
 
