@@ -194,7 +194,7 @@ class FileMonitorService : Service() {
     private suspend fun uploadFile(file: File): Boolean = withContext(Dispatchers.IO) {
         try {
             val retrofit = Retrofit.Builder()
-                .baseUrl("http://178.128.127.168:8089/") //ftp หรือ ที่จะเก็บไฟล์ที่อัพโหลด
+                .baseUrl("http://0.0.0.0:8089/") //ftp หรือ ที่จะเก็บไฟล์ที่อัพโหลด
                 .addConverterFactory(GsonConverterFactory.create())
                 .build()
 
