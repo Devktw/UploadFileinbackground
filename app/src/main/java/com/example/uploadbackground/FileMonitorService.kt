@@ -47,7 +47,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class FileMonitorService : Service() {
 
     // พาธของไดเรกทอรีที่ต้องการเฝ้าสังเกตเพื่อดูไฟล์ใหม่ และถ้ามีไฟล์เพิ่มเข้ามาที่โฟลเดอร์ของพาธนี้จะถูกอัพโหลดทันที
-    private val DIRECTORY_TO_WATCH = "${Environment.getExternalStorageDirectory()}/DJI/com.dji.industry.pilot/FlightRecord/"
+    private val DIRECTORY_TO_WATCH = "${Environment.getExternalStorageDirectory()}/test" //ตำแหนางโฟลเดอร์ที่จะตรวจสอบไฟล์ใหม่
     private var fileObserver: FileObserver? = null
 
 
